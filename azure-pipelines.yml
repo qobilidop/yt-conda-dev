@@ -1,0 +1,35 @@
+strategy:
+  matrix:
+    linux:
+      os: 'linux'
+      image: 'ubuntu-16.04'
+      source_cmd: 'source'
+    macos:
+      os: 'macos'
+      image: 'macOS-10.13'
+      source_cmd: 'source'
+    windows:
+      os: 'windows'
+      image: 'vs2017-win2016'
+      source_cmd: 'call'
+
+pool:
+  vmImage: $(image)
+
+# https://docs.microsoft.com/en-us/azure/devops/pipelines/languages/anaconda
+steps:
+
+- script: echo "##vso[task.prependpath]$CONDA/bin"
+  condition: ne(variables['os'], 'windows')
+  displayName: Add conda to PATH
+- powershell: Write-Host "##vso[task.prependpath]$env:CONDA\Scripts"
+  condition: eq(variables['os'], 'windows')
+  displayName: Add conda to PATH
+
+- script: conda env create --quiet --file environment.yml --name build-env
+  displayName: Create conda environment
+
+- script: |
+    $(source_cmd) activate build-env
+    python build-all.py
+  displayName: Build conda packages
