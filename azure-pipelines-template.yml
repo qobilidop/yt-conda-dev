@@ -1,0 +1,34 @@
+parameters:
+  platforms: []
+  packages: []
+  python_versions: []
+
+jobs:
+- job:
+  strategy:
+    matrix:
+      ${{ each platform in parameters.platforms }}:
+        ${{ platform.os }}:
+          os: ${{ platform.os }}
+          image: ${{ platform.image }}
+          source_cmd: ${{ platform.source_cmd }}
+  pool:
+    vmImage: $(image)
+  steps:
+
+  - script: echo "##vso[task.prependpath]$CONDA/bin"
+    condition: ne(variables.os, 'windows')
+    displayName: Add conda to PATH (*nix)
+  - powershell: Write-Host "##vso[task.prependpath]$env:CONDA\Scripts"
+    condition: eq(variables.os, 'windows')
+    displayName: Add conda to PATH (windows)
+
+  - script: conda env create --quiet --file environment.yml --name build-env
+    displayName: Create conda environment
+
+  - ${{ each pkg in parameters.packages }}:
+    - ${{ each py_ver in parameters.python_versions}}:
+      - script: |
+          $(source_cmd) activate build-env
+          python build.py recipes/${{ pkg }} ${{ py_ver }}
+        displayName: Build package ${{ pkg }} in Python ${{ py_ver }}
