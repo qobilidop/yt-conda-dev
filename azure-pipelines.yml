@@ -1,18 +1,21 @@
+variables:
+- group: anaconda
+
 jobs:
 - template: azure-pipelines-template.yml
   parameters:
     platforms:
-    - os: linux
+    - name: linux
       image: ubuntu-16.04
-      source_cmd: source
-    - os: macos
+    - name: macos
       image: macos-10.13
-      source_cmd: source
-    - os: windows
+    - name: windows
       image: vs2017-win2016
-      source_cmd: call
     packages:
-    - yt
+    - name: yt
+      repo: https://github.com/yt-project/yt.git
+      branch: master
+      label: dev
     python_versions:
     - 3.7
     - 3.6

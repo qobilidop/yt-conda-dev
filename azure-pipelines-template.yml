@@ -8,27 +8,80 @@ jobs:
   strategy:
     matrix:
       ${{ each platform in parameters.platforms }}:
-        ${{ platform.os }}:
-          os: ${{ platform.os }}
+        ${{ platform.name }}:
           image: ${{ platform.image }}
-          source_cmd: ${{ platform.source_cmd }}
   pool:
     vmImage: $(image)
   steps:
 
-  - script: echo "##vso[task.prependpath]$CONDA/bin"
-    condition: ne(variables.os, 'windows')
+  # This is to solve the "'stdio.h' file not found" error when using Anaconda compilers,
+  # together with the conda_build_config.yaml file.
+  # The solution is documented in:
+  # https://docs.conda.io/projects/conda-build/en/latest/resources/compiler-tools.html#macos-sdk
+  - bash: |
+      if [[ ! -d /opt/MacOSX10.9.sdk ]]; then
+        echo "Downloading MacOSX10.9.sdk"
+        curl -LO https://github.com/phracker/MacOSX-SDKs/releases/download/10.13/MacOSX10.9.sdk.tar.xz
+        sudo mkdir /opt/
+        sudo tar -xf MacOSX10.9.sdk.tar.xz -C /opt/
+      fi
+    condition: eq(variables['Agent.OS'], 'Darwin')
+    displayName: Download MacOS SDK (macos)
+
+  # This is to solve the "Did not find VS in registry or in VS90COMNTOOLS env var" error with Python 2.7.
+  - powershell: |
+      Write-Host "Setting VS90COMNTOOLS as $env:VS140COMNTOOLS"
+      Write-Host "##vso[task.setvariable variable=VS90COMNTOOLS]$env:VS140COMNTOOLS"
+    condition: eq(variables['Agent.OS'], 'Windows_NT')
+    displayName: Set VS90COMNTOOLS (windows)
+
+  # https://docs.microsoft.com/en-us/azure/devops/pipelines/languages/anaconda#add-conda-to-your-system-path
+  - bash: echo "##vso[task.prependpath]$CONDA/bin"
+    condition: ne(variables['Agent.OS'], 'Windows_NT')
     displayName: Add conda to PATH (*nix)
   - powershell: Write-Host "##vso[task.prependpath]$env:CONDA\Scripts"
-    condition: eq(variables.os, 'windows')
+    condition: eq(variables['Agent.OS'], 'Windows_NT')
     displayName: Add conda to PATH (windows)
 
-  - script: conda env create --quiet --file environment.yml --name build-env
+  - bash: conda env create --quiet --file environment.yml --name build-env
     displayName: Create conda environment
 
   - ${{ each pkg in parameters.packages }}:
+    - bash: |
+        mkdir repo
+        src_dir="repo/${{ pkg.name }}-${{ pkg.branch }}"
+        git clone --depth 1 -b ${{ pkg.branch }} ${{ pkg.repo }} "$src_dir"
+
+        cd "$src_dir"
+        pkg_ver="$(python setup.py --version | tail -n 1)"
+        # https://stackoverflow.com/a/34778736/10892982
+        timestamp="$(git log -1 --pretty=format:%cd --date=format:%Y%m%d%H%M%S)"
+        commit_hash="$(git log -1 --pretty=format:%h)"
+
+        RECIPE_PKG_VER="${pkg_ver}_${timestamp}_${commit_hash}"
+        RECIPE_SRC_DIR="../../$src_dir"
+        echo "Setting RECIPE_PKG_VER as $RECIPE_PKG_VER"
+        echo "Setting RECIPE_SRC_DIR as $RECIPE_SRC_DIR"
+        echo "##vso[task.setvariable variable=RECIPE_PKG_VER]$RECIPE_PKG_VER"
+        echo "##vso[task.setvariable variable=RECIPE_SRC_DIR]$RECIPE_SRC_DIR"
+      displayName: Download ${{ pkg.name }} ${{ pkg.branch }}
+
     - ${{ each py_ver in parameters.python_versions}}:
-      - script: |
-          $(source_cmd) activate build-env
-          python build.py recipes/${{ pkg }} ${{ py_ver }}
-        displayName: Build package ${{ pkg }} in Python ${{ py_ver }}
+      - bash: |
+          source activate build-env
+          conda_build="conda build --old-build-string --python ${{ py_ver }} recipes/${{ pkg.name }}"
+          echo "$conda_build"
+          eval "$conda_build"
+          PKG_FILE="$(eval "$conda_build --output")"
+          echo "##vso[task.setvariable variable=PKG_FILE]$PKG_FILE"
+        displayName: Build ${{ pkg.name }} ${{ pkg.branch }} in Python ${{ py_ver }}
+
+      - bash: |
+          source activate build-env
+          anaconda -t "$TOKEN" \
+          upload -u $(anaconda_user) -l ${{ pkg.label }} --skip \
+          "$PKG_FILE"
+        env:
+          TOKEN: $(anaconda_token)
+        condition: ne(variables['Build.Reason'], 'PullRequest')
+        displayName: Upload ${{ pkg.name }} ${{ pkg.branch }} in Python ${{ py_ver }} with label ${{ pkg.label }}

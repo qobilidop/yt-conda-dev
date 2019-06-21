@@ -1,0 +1,5 @@
+# https://docs.conda.io/projects/conda-build/en/latest/resources/compiler-tools.html#macos-sdk
+MACOSX_DEPLOYMENT_TARGET:
+- 10.9
+CONDA_BUILD_SYSROOT:
+- /opt/MacOSX10.9.sdk
